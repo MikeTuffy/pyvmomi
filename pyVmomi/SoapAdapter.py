@@ -951,18 +951,16 @@ except ImportError:
 
 ## https connection wrapper
 #
-# NOTE (hartsock): do not override core library types or implementations
-# directly because this makes brittle code that is too easy to break and
-# closely tied to implementation details we do not control. Instead, wrap
-# the core object to introduce additional behaviors.
+# NOTE (miketuffy): changed this class to be closer to an earlier version 
+# because the updated code was causing multiple connections to be made rather
+# than reusing the same conneection and as a result was signficantly slower
 #
 # Purpose:
 # Support ssl.wrap_socket params which are missing from httplib
 # HTTPSConnection (e.g. ca_certs)
 # Note: Only works iff the ssl params are passing in as kwargs
-class HTTPSConnectionWrapper(object):
+class HTTPSConnectionWrapper(http_client.HTTPSConnection):
    def __init__(self, *args, **kwargs):
-      wrapped = http_client.HTTPSConnection(*args, **kwargs)
       # Extract ssl.wrap_socket param unknown to httplib.HTTPConnection,
       # and push back the params in connect()
       self._sslArgs = {}
@@ -972,14 +970,16 @@ class HTTPSConnectionWrapper(object):
                   "ciphers"]:
          if key in tmpKwargs:
             self._sslArgs[key] = tmpKwargs.pop(key)
-      self._wrapped = wrapped
+      http_client.HTTPSConnection.__init__(self, *args, **tmpKwargs)
 
    ## Override connect to allow us to pass in additional ssl paramters to
    #  ssl.wrap_socket (e.g. cert_reqs, ca_certs for ca cert verification)
-   def connect(self, wrapped):
+   def connect(self):
+      print "entered connect"
       if len(self._sslArgs) == 0 or hasattr(self, '_baseclass'):
          # No override
-         return wrapped.connect
+         http_client.HTTPSConnection.connect(self)
+         return
 
       # Big hack. We have to copy and paste the httplib connect fn for
       # each python version in order to handle extra ssl paramters. Yuk!
@@ -987,30 +987,18 @@ class HTTPSConnectionWrapper(object):
          # Python 2.7
          sock = socket.create_connection((self.host, self.port),
                                          self.timeout, self.source_address)
-         if wrapped._tunnel_host:
-            wrapped.sock = sock
-            wrapped._tunnel()
-         wrapped.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, **self._sslArgs)
+         if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+         self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, **self._sslArgs)
       elif hasattr(self, "timeout"):
          # Python 2.6
          sock = socket.create_connection((self.host, self.port), self.timeout)
-         wrapped.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, **self._sslArgs)
-
-      return wrapped.connect
-
-      # TODO: Additional verification of peer cert if needed
-      #cert_reqs = self._sslArgs.get("cert_reqs", ssl.CERT_NONE)
-      #ca_certs = self._sslArgs.get("ca_certs", None)
-      #if cert_reqs != ssl.CERT_NONE and ca_certs:
-      #   if hasattr(self.sock, "getpeercert"):
-      #      # TODO: verify peer cert
-      #      dercert = self.sock.getpeercert(False)
-      #      # pemcert = ssl.DER_cert_to_PEM_cert(dercert)
-
-   def __getattr__(self, item):
-       if item == 'connect':
-           return self.connect(self._wrapped)
-       return getattr(self._wrapped, item)
+         self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file, **self._sslArgs)
+      else:
+         # Unknown python version. Do nothing
+         http_client.HTTPSConnection.connect(self)
+         return
 
 ## Stand-in for the HTTPSConnection class that will connect to a proxy and
 ## issue a CONNECT command to start an SSL tunnel.
