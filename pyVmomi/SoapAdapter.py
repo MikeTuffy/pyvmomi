@@ -975,7 +975,6 @@ class HTTPSConnectionWrapper(http_client.HTTPSConnection):
    ## Override connect to allow us to pass in additional ssl paramters to
    #  ssl.wrap_socket (e.g. cert_reqs, ca_certs for ca cert verification)
    def connect(self):
-      print "entered connect"
       if len(self._sslArgs) == 0 or hasattr(self, '_baseclass'):
          # No override
          http_client.HTTPSConnection.connect(self)
